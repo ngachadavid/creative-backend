@@ -5,52 +5,111 @@ const supabase = require('../supabaseClient')
 // GET /api/products
 router.get('/', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('products').select('*')
+    const { data, error } = await supabase
+      .from('products')
+      .select(`
+        *,
+        category:categories (
+          id,
+          name
+        )
+      `)
+
     if (error) throw error
+
     res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// POST /api/products
-router.post('/', async (req, res) => {
+
+// GET /api/products/:id
+router.get('/:id', async (req, res) => {
   try {
-    const { name, description, price, category, image, images, size } = req.body
+    const { id } = req.params
 
-    // --- Basic Validation ---
-    if (!name || name.trim() === '') {
-      return res.status(400).json({ error: 'Product name is required' })
-    }
-
-    if (!price || isNaN(price) || Number(price) <= 0) {
-      return res.status(400).json({ error: 'Price must be a valid number greater than 0' })
-    }
-
-    if (!image || image.trim() === '') {
-      return res.status(400).json({ error: 'Main image URL is required' })
-    }
-
-    // --- Insert Product ---
     const { data, error } = await supabase
       .from('products')
-      .insert([
-        { name, description, price, category, image, images, size }
-      ])
-      .select()
+      .select(`
+        *,
+        category:categories (
+          id,
+          name
+        )
+      `)
+      .eq('id', id)
+      .single()
 
     if (error) throw error
 
-    if (data && data.length > 0) {
-      res.status(201).json(data[0])
-    } else {
-      res.status(201).json({ message: 'Product created successfully' })
-    }
-
+    res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
+
+// POST /api/products
+router.post('/', async (req, res) => {
+  try {
+    const { name, description, price, category_id, image, images, size } = req.body
+
+    if (!name || !image || isNaN(price)) {
+      return res.status(400).json({ error: 'Name, image, and valid price are required.' })
+    }
+
+    const { data, error } = await supabase
+      .from('products')
+      .insert([{ name, description, price, category_id, image, images, size }])
+      .select()
+
+    if (error) throw error
+
+    res.status(201).json(data?.[0] || { message: 'Product created successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
+// PUT /api/products/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { name, description, price, category_id, image, images, size } = req.body
+
+    const { data, error } = await supabase
+      .from('products')
+      .update({ name, description, price, category_id, image, images, size })
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+
+    res.json(data?.[0] || { message: 'Product updated.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
+// DELETE /api/products/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+
+    res.json({ message: 'Product deleted successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 module.exports = router
