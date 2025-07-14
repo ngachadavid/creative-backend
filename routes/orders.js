@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
 const verifyAdmin = require('../middleware/verifyAdmin');
+const deliveryFees = require('../utils/deliveryFee')
 
 // GET /api/orders
 router.get('/', verifyAdmin, async (req, res) => {
@@ -50,15 +51,23 @@ router.post('/', async (req, res) => {
       city,
       county,
       items,
-      total_amount
+      subtotal // NOTE: This now comes from frontend
     } = req.body;
 
     // ✅ Basic validation
-    if (!full_name || !phone || !address || !city || !county || !items || !total_amount) {
+    if (!full_name || !phone || !address || !city || !county || !items || !subtotal) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Optional: You can also validate items is an array and total_amount is a number
+    // ✅ Determine delivery fee based on county
+    const delivery_fee = deliveryFees[county];
+
+    if (delivery_fee === undefined) {
+      return res.status(400).json({ error: 'Invalid county — delivery fee not found' });
+    }
+
+    // ✅ Calculate total
+    const total_amount = subtotal + delivery_fee;
 
     const { data, error } = await supabase
       .from('orders')
@@ -70,8 +79,10 @@ router.post('/', async (req, res) => {
         city,
         county,
         items,
+        subtotal,
+        delivery_fee,
         total_amount,
-        status: 'pending' // default
+        status: 'pending'
       }])
       .select();
 
@@ -82,6 +93,7 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // PUT /api/orders/:id
 router.put('/:id', verifyAdmin, async (req, res) => {
