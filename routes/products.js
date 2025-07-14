@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../supabaseClient')
+const verifyAdmin = require('../middleware/verifyAdmin');
 
 // GET /api/products
 router.get('/', async (req, res) => {
@@ -51,7 +52,7 @@ router.get('/:id', async (req, res) => {
 
 
 // POST /api/products
-router.post('/', async (req, res) => {
+router.post('/', verifyAdmin, async (req, res) => {
   try {
     const { name, description, price, category_id, image, images, size } = req.body
 
@@ -74,7 +75,7 @@ router.post('/', async (req, res) => {
 
 
 // PUT /api/products/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { name, description, price, category_id, image, images, size } = req.body
@@ -95,7 +96,7 @@ router.put('/:id', async (req, res) => {
 
 
 // DELETE /api/products/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params
 

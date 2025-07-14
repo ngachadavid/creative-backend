@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../supabaseClient')
+const verifyAdmin = require('../middleware/verifyAdmin');
 
 // GET /api/categories
 router.get('/', async (req, res) => {
@@ -32,7 +33,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST /api/categories
-router.post('/', async (req, res) => {
+router.post('/', verifyAdmin, async (req, res) => {
   try {
     const { name } = req.body
     
@@ -54,7 +55,7 @@ router.post('/', async (req, res) => {
 })
 
 // PUT /api/categories/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyAdmin, async (req, res) => {
   const { id } = req.params
   const { name } = req.body
 
@@ -78,7 +79,7 @@ router.put('/:id', async (req, res) => {
 
 
 // DELETE /api/categories/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyAdmin, async (req, res) => {
   const { id } = req.params
 
   try {
@@ -86,7 +87,7 @@ router.delete('/:id', async (req, res) => {
     const { data: products, error: productError } = await supabase
       .from('products')
       .select('id')
-      .eq('category', id)
+      .eq('category_id', id)
 
     if (productError) throw productError
 

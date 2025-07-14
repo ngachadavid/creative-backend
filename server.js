@@ -12,5 +12,9 @@ app.use('/api/products', productRoutes)
 const categoryRoutes = require('./routes/categories')
 app.use('/api/categories', categoryRoutes)
 
+const adminAuthRoutes = require('./routes/adminAuth');
+app.use('/api/admin', adminAuthRoutes);
+
+
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
