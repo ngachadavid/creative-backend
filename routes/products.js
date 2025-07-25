@@ -8,7 +8,7 @@ const multer = require('multer')
 const storage = multer.memoryStorage()
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit per file
   fileFilter: (req, file, cb) => {
     // Only allow image files
     if (file.mimetype.startsWith('image/')) {
@@ -19,12 +19,19 @@ const upload = multer({
   }
 })
 
+// Configure multer for multiple files
+const uploadMultiple = upload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'additionalImages', maxCount: 10 } // Allow up to 10 additional images
+])
+
 // Helper function to upload image to Supabase storage
 const uploadImageToSupabase = async (file, folder = 'products') => {
   try {
     const fileExt = file.originalname.split('.').pop()
     const timestamp = Date.now()
-    const fileName = `${timestamp}-${file.originalname}`
+    const randomSuffix = Math.random().toString(36).substring(2, 8)
+    const fileName = `${timestamp}-${randomSuffix}.${fileExt}`
     const filePath = `${folder}/${fileName}`
 
     const { data, error } = await supabase.storage
@@ -64,6 +71,14 @@ const deleteImageFromSupabase = async (imageUrl) => {
   } catch (error) {
     console.error('Error deleting image:', error)
   }
+}
+
+// Helper function to delete multiple images
+const deleteMultipleImages = async (imageUrls) => {
+  if (!Array.isArray(imageUrls)) return
+  
+  const deletePromises = imageUrls.map(url => deleteImageFromSupabase(url))
+  await Promise.all(deletePromises)
 }
 
 // GET /api/products
@@ -113,23 +128,31 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST /api/products
-router.post('/', verifyAdmin, upload.single('image'), async (req, res) => {
+router.post('/', verifyAdmin, uploadMultiple, async (req, res) => {
   try {
-    const { name, description, price, category_id, images, size } = req.body
+    const { name, description, price, category_id, size } = req.body
     
     if (!name || isNaN(price)) {
       return res.status(400).json({ error: 'Name and valid price are required.' })
     }
 
     let imageUrl = null
+    let additionalImagesUrls = []
     
-    // Handle image upload
-    if (req.file) {
-      imageUrl = await uploadImageToSupabase(req.file)
+    // Handle main image upload
+    if (req.files && req.files.image && req.files.image[0]) {
+      imageUrl = await uploadImageToSupabase(req.files.image[0])
     }
 
-    // Parse arrays if they come as strings
-    const parsedImages = images ? (typeof images === 'string' ? JSON.parse(images) : images) : []
+    // Handle additional images upload
+    if (req.files && req.files.additionalImages) {
+      const uploadPromises = req.files.additionalImages.map(file => 
+        uploadImageToSupabase(file)
+      )
+      additionalImagesUrls = await Promise.all(uploadPromises)
+    }
+
+    // Parse size array if it comes as string
     const parsedSize = size ? (typeof size === 'string' ? JSON.parse(size) : size) : []
 
     const { data, error } = await supabase
@@ -140,7 +163,7 @@ router.post('/', verifyAdmin, upload.single('image'), async (req, res) => {
         price, 
         category_id, 
         image: imageUrl, 
-        images: parsedImages, 
+        images: additionalImagesUrls, 
         size: parsedSize 
       }])
       .select()
@@ -149,40 +172,72 @@ router.post('/', verifyAdmin, upload.single('image'), async (req, res) => {
 
     res.status(201).json(data?.[0] || { message: 'Product created successfully' })
   } catch (err) {
+    // Clean up uploaded images if database insert fails
+    if (req.files) {
+      if (req.files.image && req.files.image[0]) {
+        // Delete main image if it was uploaded
+      }
+      if (req.files.additionalImages) {
+        // Delete additional images if they were uploaded
+      }
+    }
     res.status(500).json({ error: err.message })
   }
 })
 
 // PUT /api/products/:id
-router.put('/:id', verifyAdmin, upload.single('image'), async (req, res) => {
+router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
   try {
     const { id } = req.params
-    const { name, description, price, category_id, images, size } = req.body
+    const { name, description, price, category_id, size, existingImages } = req.body
 
-    // Get current product to check for existing image
+    // Get current product to check for existing images
     const { data: currentProduct, error: fetchError } = await supabase
       .from('products')
-      .select('image')
+      .select('image, images')
       .eq('id', id)
       .single()
 
     if (fetchError) throw fetchError
 
-    let imageUrl = currentProduct.image // Keep existing image by default
+    let imageUrl = currentProduct.image // Keep existing main image by default
+    let finalAdditionalImages = []
 
-    // Handle new image upload
-    if (req.file) {
-      // Delete old image if it exists
+    // Handle main image update
+    if (req.files && req.files.image && req.files.image[0]) {
+      // Delete old main image if it exists
       if (currentProduct.image) {
         await deleteImageFromSupabase(currentProduct.image)
       }
       
-      // Upload new image
-      imageUrl = await uploadImageToSupabase(req.file)
+      // Upload new main image
+      imageUrl = await uploadImageToSupabase(req.files.image[0])
     }
 
-    // Parse arrays if they come as strings
-    const parsedImages = images ? (typeof images === 'string' ? JSON.parse(images) : images) : []
+    // Handle additional images
+    // 1. Start with existing images that weren't removed
+    const existingImagesArray = existingImages ? JSON.parse(existingImages) : []
+    finalAdditionalImages = [...existingImagesArray]
+
+    // 2. Find images to delete (current images not in existingImages)
+    const currentImages = currentProduct.images || []
+    const imagesToDelete = currentImages.filter(img => !existingImagesArray.includes(img))
+    
+    // Delete removed images from storage
+    if (imagesToDelete.length > 0) {
+      await deleteMultipleImages(imagesToDelete)
+    }
+
+    // 3. Upload new additional images
+    if (req.files && req.files.additionalImages) {
+      const uploadPromises = req.files.additionalImages.map(file => 
+        uploadImageToSupabase(file)
+      )
+      const newImageUrls = await Promise.all(uploadPromises)
+      finalAdditionalImages = [...finalAdditionalImages, ...newImageUrls]
+    }
+
+    // Parse size array if it comes as string
     const parsedSize = size ? (typeof size === 'string' ? JSON.parse(size) : size) : []
 
     const { data, error } = await supabase
@@ -193,7 +248,7 @@ router.put('/:id', verifyAdmin, upload.single('image'), async (req, res) => {
         price, 
         category_id, 
         image: imageUrl, 
-        images: parsedImages, 
+        images: finalAdditionalImages, 
         size: parsedSize 
       })
       .eq('id', id)
@@ -212,10 +267,10 @@ router.delete('/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params
 
-    // Get product to delete associated image
+    // Get product to delete associated images
     const { data: product, error: fetchError } = await supabase
       .from('products')
-      .select('image')
+      .select('image, images')
       .eq('id', id)
       .single()
 
@@ -229,9 +284,13 @@ router.delete('/:id', verifyAdmin, async (req, res) => {
 
     if (error) throw error
 
-    // Delete associated image from storage
+    // Delete associated images from storage
     if (product.image) {
       await deleteImageFromSupabase(product.image)
+    }
+    
+    if (product.images && product.images.length > 0) {
+      await deleteMultipleImages(product.images)
     }
 
     res.json({ message: 'Product deleted successfully' })
