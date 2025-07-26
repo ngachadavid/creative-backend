@@ -3,7 +3,11 @@ const app = express()
 const cors = require('cors')
 require('dotenv').config()
 
-app.use(cors())
+// allow local dev and deployed frontend
+app.use(cors({
+  origin: ['https://creative-sync.vercel.app'],
+  credentials: true, 
+}));
 app.use(express.json())
 
 const productRoutes = require('./routes/products')
