@@ -5,7 +5,7 @@ require('dotenv').config()
 
 // allow local dev and deployed frontend
 app.use(cors({
-  origin: ['https://creative-sync.vercel.app'],
+    origin: ['http://localhost:3000', 'https://creative-sync.vercel.app'],
   credentials: true, 
 }));
 app.use(express.json())
