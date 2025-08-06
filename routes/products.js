@@ -93,6 +93,7 @@ router.get('/', async (req, res) => {
           name
         )
       `)
+       .order('created_at', { ascending: false })
 
     if (error) throw error
 
@@ -200,7 +201,7 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
 
     if (fetchError) throw fetchError
 
-    let imageUrl = currentProduct.image // Keep existing main image by default
+    let imageUrl = currentProduct.image
     let finalAdditionalImages = []
 
     // Handle main image update
