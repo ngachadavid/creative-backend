@@ -192,7 +192,7 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
     const { id } = req.params
     const { name, description, price, category_id, size, existingImages } = req.body
 
-    // Get current product to check for existing images
+    // Get current product
     const { data: currentProduct, error: fetchError } = await supabase
       .from('products')
       .select('image, images')
@@ -204,32 +204,25 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
     let imageUrl = currentProduct.image
     let finalAdditionalImages = []
 
-    // Handle main image update
+    // Handle main image
     if (req.files && req.files.image && req.files.image[0]) {
-      // Delete old main image if it exists
       if (currentProduct.image) {
         await deleteImageFromSupabase(currentProduct.image)
       }
-      
-      // Upload new main image
       imageUrl = await uploadImageToSupabase(req.files.image[0])
     }
 
     // Handle additional images
-    // 1. Start with existing images that weren't removed
     const existingImagesArray = existingImages ? JSON.parse(existingImages) : []
     finalAdditionalImages = [...existingImagesArray]
 
-    // 2. Find images to delete (current images not in existingImages)
     const currentImages = currentProduct.images || []
     const imagesToDelete = currentImages.filter(img => !existingImagesArray.includes(img))
     
-    // Delete removed images from storage
     if (imagesToDelete.length > 0) {
       await deleteMultipleImages(imagesToDelete)
     }
 
-    // 3. Upload new additional images
     if (req.files && req.files.additionalImages) {
       const uploadPromises = req.files.additionalImages.map(file => 
         uploadImageToSupabase(file)
@@ -238,27 +231,25 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
       finalAdditionalImages = [...finalAdditionalImages, ...newImageUrls]
     }
 
-    // Parse size array if it comes as string
     const parsedSize = size ? (typeof size === 'string' ? JSON.parse(size) : size) : []
 
-    const { data, error } = await supabase
-      .from('products')
-      .update({ 
-        name, 
-        description, 
-        price, 
-        category_id, 
-        image: imageUrl, 
-        images: finalAdditionalImages, 
-        size: parsedSize 
-      })
-      .eq('id', id)
-      .select()
+    // Use raw SQL to bypass RLS
+    const { data, error } = await supabase.rpc('update_product_admin', {
+      product_id: parseInt(id),
+      product_name: name,
+      product_description: description,
+      product_price: parseFloat(price),
+      product_category_id: parseInt(category_id),
+      product_image: imageUrl,
+      product_images: finalAdditionalImages,
+      product_size: parsedSize
+    })
 
     if (error) throw error
 
-    res.json(data?.[0] || { message: 'Product updated.' })
+    res.json({ message: 'Product updated successfully' })
   } catch (err) {
+    console.error('Update error:', err)
     res.status(500).json({ error: err.message })
   }
 })
