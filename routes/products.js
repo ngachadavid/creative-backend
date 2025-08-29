@@ -35,7 +35,7 @@ const uploadImageToSupabase = async (file, folder = 'products') => {
     const filePath = `${folder}/${fileName}`
 
     const { data, error } = await supabase.storage
-      .from('product-images') // Make sure this bucket exists in Supabase
+      .from('product-images') 
       .upload(filePath, file.buffer, {
         contentType: file.mimetype,
         upsert: false
@@ -128,9 +128,12 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-// POST /api/products
+// POST /api/products - add better error logging
 router.post('/', verifyAdmin, uploadMultiple, async (req, res) => {
   try {
+    console.log('POST request received:', req.body)
+    console.log('Files:', req.files)
+    
     const { name, description, price, category_id, size } = req.body
     
     if (!name || isNaN(price)) {
@@ -142,19 +145,27 @@ router.post('/', verifyAdmin, uploadMultiple, async (req, res) => {
     
     // Handle main image upload
     if (req.files && req.files.image && req.files.image[0]) {
+      console.log('Uploading main image...')
       imageUrl = await uploadImageToSupabase(req.files.image[0])
+      console.log('Main image uploaded:', imageUrl)
     }
 
     // Handle additional images upload
     if (req.files && req.files.additionalImages) {
+      console.log('Uploading additional images...')
       const uploadPromises = req.files.additionalImages.map(file => 
         uploadImageToSupabase(file)
       )
       additionalImagesUrls = await Promise.all(uploadPromises)
+      console.log('Additional images uploaded:', additionalImagesUrls)
     }
 
     // Parse size array if it comes as string
     const parsedSize = size ? (typeof size === 'string' ? JSON.parse(size) : size) : []
+
+    console.log('Inserting into database:', {
+      name, description, price, category_id, imageUrl, additionalImagesUrls, parsedSize
+    })
 
     const { data, error } = await supabase
       .from('products')
@@ -169,28 +180,33 @@ router.post('/', verifyAdmin, uploadMultiple, async (req, res) => {
       }])
       .select()
 
-    if (error) throw error
+    console.log('Insert result:', { data, error })
+
+    if (error) {
+      console.error('Detailed insert error:', error)
+      throw error
+    }
 
     res.status(201).json(data?.[0] || { message: 'Product created successfully' })
   } catch (err) {
+    console.error('Full error in POST:', err)
+    
     // Clean up uploaded images if database insert fails
-    if (req.files) {
-      if (req.files.image && req.files.image[0]) {
-        // Delete main image if it was uploaded
-      }
-      if (req.files.additionalImages) {
-        // Delete additional images if they were uploaded
-      }
-    }
+    if (imageUrl) await deleteImageFromSupabase(imageUrl)
+    if (additionalImagesUrls.length > 0) await deleteMultipleImages(additionalImagesUrls)
+    
     res.status(500).json({ error: err.message })
   }
 })
 
-// PUT /api/products/:id
+// PUT /api/products/:id - simplified version
 router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
   try {
     const { id } = req.params
     const { name, description, price, category_id, size, existingImages } = req.body
+
+    console.log('Update request received:', { id, name, price, category_id, existingImages })
+    console.log('Files received:', req.files)
 
     // Get current product
     const { data: currentProduct, error: fetchError } = await supabase
@@ -206,10 +222,12 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
 
     // Handle main image
     if (req.files && req.files.image && req.files.image[0]) {
+      console.log('Processing main image upload...')
       if (currentProduct.image) {
         await deleteImageFromSupabase(currentProduct.image)
       }
       imageUrl = await uploadImageToSupabase(req.files.image[0])
+      console.log('New main image URL:', imageUrl)
     }
 
     // Handle additional images
@@ -220,36 +238,58 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
     const imagesToDelete = currentImages.filter(img => !existingImagesArray.includes(img))
     
     if (imagesToDelete.length > 0) {
+      console.log('Deleting images:', imagesToDelete)
       await deleteMultipleImages(imagesToDelete)
     }
 
     if (req.files && req.files.additionalImages) {
+      console.log('Processing additional images upload...')
       const uploadPromises = req.files.additionalImages.map(file => 
         uploadImageToSupabase(file)
       )
       const newImageUrls = await Promise.all(uploadPromises)
       finalAdditionalImages = [...finalAdditionalImages, ...newImageUrls]
+      console.log('New additional images:', newImageUrls)
     }
 
     const parsedSize = size ? (typeof size === 'string' ? JSON.parse(size) : size) : []
 
-    // Use raw SQL to bypass RLS
-    const { data, error } = await supabase.rpc('update_product_admin', {
-      product_id: parseInt(id),
-      product_name: name,
-      product_description: description,
-      product_price: parseFloat(price),
-      product_category_id: parseInt(category_id),
-      product_image: imageUrl,
-      product_images: finalAdditionalImages,
-      product_size: parsedSize
+    console.log('Final data to update:', {
+      name, 
+      description, 
+      price: parseFloat(price), 
+      category_id: parseInt(category_id),
+      image: imageUrl,
+      images: finalAdditionalImages,
+      size: parsedSize
     })
 
-    if (error) throw error
+    // Use direct update instead of RPC
+    const { data, error } = await supabase
+      .from('products')
+      .update({ 
+        name, 
+        description, 
+        price: parseFloat(price), 
+        category_id: parseInt(category_id),
+        image: imageUrl,
+        images: finalAdditionalImages,
+        size: parsedSize,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
 
-    res.json({ message: 'Product updated successfully' })
+    console.log('Update response:', { data, error })
+
+    if (error) {
+      console.error('Supabase update error details:', error)
+      throw error
+    }
+
+    res.json(data?.[0] || { message: 'Product updated successfully' })
   } catch (err) {
-    console.error('Update error:', err)
+    console.error('Update error details:', err)
     res.status(500).json({ error: err.message })
   }
 })
