@@ -275,7 +275,7 @@ router.put('/:id', verifyAdmin, uploadMultiple, async (req, res) => {
         image: imageUrl,
         images: finalAdditionalImages,
         size: parsedSize,
-        updated_at: new Date().toISOString()
+        // updated_at: new Date().toISOString()
       })
       .eq('id', id)
       .select()
