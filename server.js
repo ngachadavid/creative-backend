@@ -5,7 +5,7 @@ require('dotenv').config()
 
 // allow local dev and deployed frontend
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://creativesync.co.ke'],
+    origin: ['http://localhost:3000', 'https://creativesync.co.ke', 'https://www.creativesync.co.ke'],
   credentials: true, 
 }));
 app.use(express.json())
