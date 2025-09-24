@@ -178,4 +178,38 @@ router.get('/:id', async (req, res) => {
   }
 })
 
+// DELETE /api/submissions/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    // Get submission to delete associated image
+    const { data: submission, error: fetchError } = await supabase
+      .from('submissions')
+      .select('image_url')
+      .eq('id', id)
+      .single()
+
+    if (fetchError) throw fetchError
+
+    // Delete submission from database
+    const { error } = await supabase
+      .from('submissions')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+
+    // Delete associated image from storage
+    if (submission.image_url) {
+      await deleteImageFromSupabase(submission.image_url)
+    }
+
+    res.json({ message: 'Submission deleted successfully' })
+  } catch (err) {
+    console.error('Error deleting submission:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
