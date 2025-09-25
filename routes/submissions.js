@@ -18,8 +18,11 @@ const upload = multer({
   }
 })
 
-// Configure multer for single file upload
-const uploadSingle = upload.single('image')
+// Configure multer for flexible upload (single or multiple)
+const uploadFlexible = upload.fields([
+  { name: 'image', maxCount: 1 },        // Single image (backwards compatibility)
+  { name: 'images', maxCount: 10 }       // Multiple images (up to 10)
+])
 
 // Helper function to upload image to Supabase storage
 const uploadImageToSupabase = async (file, folder = 'submissions') => {
@@ -50,6 +53,12 @@ const uploadImageToSupabase = async (file, folder = 'submissions') => {
   }
 }
 
+// Helper function to upload multiple images
+const uploadMultipleImages = async (files, folder = 'submissions') => {
+  const uploadPromises = files.map(file => uploadImageToSupabase(file, folder))
+  return await Promise.all(uploadPromises)
+}
+
 // Helper function to delete image from Supabase storage
 const deleteImageFromSupabase = async (imageUrl) => {
   try {
@@ -69,11 +78,18 @@ const deleteImageFromSupabase = async (imageUrl) => {
   }
 }
 
+// Helper function to delete multiple images
+const deleteMultipleImages = async (imageUrls) => {
+  if (!imageUrls || imageUrls.length === 0) return
+  const deletePromises = imageUrls.map(url => deleteImageFromSupabase(url))
+  await Promise.all(deletePromises)
+}
+
 // POST /api/submissions
-router.post('/', uploadSingle, async (req, res) => {
+router.post('/', uploadFlexible, async (req, res) => {
   try {
     console.log('Submission POST request received:', req.body)
-    console.log('File:', req.file)
+    console.log('Files:', req.files)
     
     const {
       full_name,
@@ -92,36 +108,67 @@ router.post('/', uploadSingle, async (req, res) => {
       return res.status(400).json({ error: 'Full name, email, and title are required.' })
     }
 
-    let imageUrl = null
+    let imageUrls = []
+    let uploadedUrls = [] // Track uploaded URLs for cleanup
     
-    // Handle image upload
-    if (req.file) {
-      console.log('Uploading submission image...')
-      imageUrl = await uploadImageToSupabase(req.file)
-      console.log('Submission image uploaded:', imageUrl)
+    // Handle image uploads
+    if (req.files) {
+      try {
+        // Handle single image (backwards compatibility)
+        if (req.files.image && req.files.image.length > 0) {
+          console.log('Uploading single image...')
+          const imageUrl = await uploadImageToSupabase(req.files.image[0])
+          imageUrls.push(imageUrl)
+          uploadedUrls.push(imageUrl)
+          console.log('Single image uploaded:', imageUrl)
+        }
+        
+        // Handle multiple images
+        if (req.files.images && req.files.images.length > 0) {
+          console.log('Uploading multiple images...')
+          const multipleUrls = await uploadMultipleImages(req.files.images)
+          imageUrls.push(...multipleUrls)
+          uploadedUrls.push(...multipleUrls)
+          console.log('Multiple images uploaded:', multipleUrls)
+        }
+      } catch (uploadError) {
+        // Clean up any uploaded images if there's an error
+        await deleteMultipleImages(uploadedUrls)
+        throw uploadError
+      }
     }
 
     console.log('Inserting submission into database:', {
-      full_name, email, title, imageUrl
+      full_name, email, title, imageUrls
     })
+
+    // Store images as JSON array, but keep backwards compatibility
+    const submissionData = {
+      full_name,
+      email,
+      phone,
+      address,
+      title,
+      year,
+      medium,
+      dimensions,
+      price,
+      status: 'pending'
+    }
+
+    // For backwards compatibility, store first image in image_url
+    if (imageUrls.length > 0) {
+      submissionData.image_url = imageUrls[0]
+    }
+
+    // Store all images in a new column (you'll need to add this column)
+    if (imageUrls.length > 0) {
+      submissionData.image_urls = imageUrls
+    }
 
     const { data, error } = await supabase
       .from('submissions')
-      .insert([
-        {
-          full_name,
-          email,
-          phone,
-          address,
-          title,
-          year,
-          medium,
-          dimensions,
-          price,
-          image_url: imageUrl,
-          status: 'pending' 
-        }
-      ])
+      .insert([submissionData])
       .select()
       .single()
 
@@ -129,16 +176,14 @@ router.post('/', uploadSingle, async (req, res) => {
 
     if (error) {
       console.error('Detailed insert error:', error)
+      // Clean up uploaded images if database insert fails
+      await deleteMultipleImages(uploadedUrls)
       throw error
     }
 
     res.status(201).json(data)
   } catch (err) {
     console.error('Full error in submissions POST:', err)
-    
-    // Clean up uploaded image if database insert fails
-    if (imageUrl) await deleteImageFromSupabase(imageUrl)
-    
     res.status(500).json({ error: err.message })
   }
 })
@@ -183,10 +228,10 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params
 
-    // Get submission to delete associated image
+    // Get submission to delete associated images
     const { data: submission, error: fetchError } = await supabase
       .from('submissions')
-      .select('image_url')
+      .select('image_url, image_urls')
       .eq('id', id)
       .single()
 
@@ -200,10 +245,22 @@ router.delete('/:id', async (req, res) => {
 
     if (error) throw error
 
-    // Delete associated image from storage
+    // Delete associated images from storage
+    const imagesToDelete = []
+    
+    // Add single image (backwards compatibility)
     if (submission.image_url) {
-      await deleteImageFromSupabase(submission.image_url)
+      imagesToDelete.push(submission.image_url)
     }
+    
+    // Add multiple images
+    if (submission.image_urls && Array.isArray(submission.image_urls)) {
+      imagesToDelete.push(...submission.image_urls)
+    }
+    
+    // Remove duplicates and delete
+    const uniqueImages = [...new Set(imagesToDelete)]
+    await deleteMultipleImages(uniqueImages)
 
     res.json({ message: 'Submission deleted successfully' })
   } catch (err) {
