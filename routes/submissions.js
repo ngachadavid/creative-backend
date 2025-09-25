@@ -21,7 +21,7 @@ const upload = multer({
 // Configure multer for flexible upload (single or multiple)
 const uploadFlexible = upload.fields([
   { name: 'image', maxCount: 1 },        // Single image (backwards compatibility)
-  { name: 'images', maxCount: 10 }       // Multiple images (up to 10)
+  { name: 'images', maxCount: 5 }       // Multiple images (up to 5)
 ])
 
 // Helper function to upload image to Supabase storage
